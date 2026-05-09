@@ -1,8 +1,8 @@
 # AI Agent Web App
 
-AI-powered web application with Entra ID authentication and Foundry Agent Service integration. Deploy to Azure Container Apps with a single command.
+AI-powered web application with Foundry Agent Service integration and optional Entra ID authentication. Deploy to Azure Container Apps with a single command.
 
-> **⚠️ Coming from the AI Foundry portal?** The portal's "View sample app code" gives you AI resource variables, but this app also needs an **Entra ID app registration** for authentication — which is created by `azd up`. Even if your AI Foundry resources already exist, you must run `azd up` before the app will work. See the [Foundry portal setup](#coming-from-the-ai-foundry-portal) section below.
+> **Note for this fork**: It is configured for no-auth mode (`DISABLE_AUTH=true`), so **Entra app registration is not required**. You still run `azd up` to provision Container Apps/ACR, discover Foundry settings, and assign RBAC.
 
 ## Quick Start
 
@@ -25,7 +25,7 @@ azd up
 
 The `azd up` command:
 1. Discovers AI Foundry resources in your subscription
-2. Creates Microsoft Entra ID app registration (via Bicep) and Azure infrastructure (ACR, Container Apps)
+2. Creates Azure infrastructure (ACR, Container Apps)
 3. Builds and deploys your application
 4. Opens browser to your deployed app
 
@@ -34,7 +34,7 @@ The `azd up` command:
 
 ### GitHub Codespaces
 
-This repo includes a devcontainer configuration for Codespaces. The `azd` CLI, .NET 10 SDK, Node.js, and PowerShell are pre-installed. Open in Codespaces, then run `azd up` from the terminal to provision the Entra app and generate `.env` files.
+This repo includes a devcontainer configuration for Codespaces. The `azd` CLI, .NET 10 SDK, Node.js, and PowerShell are pre-installed. Open in Codespaces, then run `azd up` from the terminal to provision infrastructure and generate `.env` files.
 
 > **Corporate tenants**: Codespaces VMs are not managed by Intune, so organizations with device-compliance Conditional Access policies may block `az login` or token acquisition. The `az login --use-device-code` flow authenticates on your compliant browser, but some policies evaluate the device at token-use time — not just at login. If you hit authentication errors in Codespaces, use local development instead.
 
@@ -86,7 +86,7 @@ registry=https://your-registry.example.com/
 
 ### Organization-Specific Requirements
 
-If your organization requires a Service Management Reference for Entra ID app registrations:
+If you enable Entra auth (`DISABLE_AUTH=false`) and your organization requires a Service Management Reference for Entra ID app registrations:
 
 ```powershell
 azd env set ENTRA_SERVICE_MANAGEMENT_REFERENCE "<guid-from-admin>"
@@ -147,12 +147,12 @@ The workspace includes optimized VS Code configuration for AI-assisted developme
 
 ### Coming from the AI Foundry Portal
 
-The portal's "View sample app code" dialog provides AI resource variables (`AI_AGENT_ENDPOINT`, `AI_AGENT_ID`, etc.), which tell the app *which agent to talk to*. However, this app also requires an **Entra ID app registration** for user authentication — which the portal does not create. Running `azd up` creates it, along with the `.env` files that wire everything together.
+The portal's "View sample app code" dialog provides AI resource variables (`AI_AGENT_ENDPOINT`, `AI_AGENT_ID`, etc.), which tell the app *which agent to talk to*. In this fork, auth is disabled (`DISABLE_AUTH=true`), so no Entra app registration is needed. Running `azd up` wires these values into deployment, provisions infrastructure, and applies RBAC.
 
 **What the portal gives you**: AI Foundry project endpoint and agent ID — these identify your agent.
-**What `azd up` adds**: Entra app registration, JWT auth config, redirect URIs, RBAC grants, Azure infrastructure.
+**What `azd up` adds in this fork**: RBAC grants, Azure infrastructure, image deployment, and generated `.env` files for no-auth mode.
 
-Without `azd up`, the frontend shows `undefined` in the login URL because `VITE_ENTRA_SPA_CLIENT_ID` and `VITE_ENTRA_TENANT_ID` don't exist yet.
+If you later need Entra login, set `DISABLE_AUTH=false` before `azd up` and the Entra app registration flow is enabled.
 
 If you clicked "View sample app code" in the portal, you can either paste the portal variables into a root `.env` file or set them via `azd env set`, then run `azd up`:
 
