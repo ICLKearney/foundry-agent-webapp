@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Identity.Web;
+using WebApp.Api.Middleware;
 using WebApp.Api.Models;
 using WebApp.Api.Services;
 using System.Security.Claims;
@@ -176,6 +177,9 @@ app.UseCors("AllowFrontend");
 
 // Note: HTTPS redirection not needed - Azure Container Apps handles SSL termination at ingress
 // The container receives HTTP traffic on port 8080
+
+// Basic auth gate — active only when WEB_APP_USERNAME/WEB_APP_PASSWORD env vars are set
+app.UseMiddleware<BasicAuthMiddleware>();
 
 // Add authentication and authorization middleware
 app.UseAuthentication();

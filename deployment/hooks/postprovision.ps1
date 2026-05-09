@@ -180,6 +180,41 @@ if ($webIdentityPrincipalId -and $aiFoundryResourceGroup -and $aiFoundryResource
     Write-Host "  Set AI_FOUNDRY_RESOURCE_GROUP and AI_FOUNDRY_RESOURCE_NAME environment variables" -ForegroundColor Gray
 }
 
+# Add web-app-username and web-app-password as Container App secrets and env vars
+# Set via: azd env set WEB_APP_USERNAME <value> && azd env set WEB_APP_PASSWORD <value>
+$webAppUsername = azd env get-value WEB_APP_USERNAME 2>$null
+$webAppPassword = azd env get-value WEB_APP_PASSWORD 2>$null
+$containerAppName = azd env get-value AZURE_CONTAINER_APP_NAME 2>$null
+$resourceGroupName = azd env get-value AZURE_RESOURCE_GROUP_NAME 2>$null
+
+if ($webAppUsername -and $webAppPassword -and $containerAppName -and $resourceGroupName) {
+    Write-Host "Configuring basic auth secrets on Container App..." -ForegroundColor Yellow
+
+    az containerapp secret set `
+        --name $containerAppName `
+        --resource-group $resourceGroupName `
+        --secrets "web-app-username=$webAppUsername" "web-app-password=$webAppPassword" `
+        --output none
+
+    if ($LASTEXITCODE -eq 0) {
+        az containerapp update `
+            --name $containerAppName `
+            --resource-group $resourceGroupName `
+            --set-env-vars "WEB_APP_USERNAME=secretref:web-app-username" "WEB_APP_PASSWORD=secretref:web-app-password" `
+            --output none
+
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] Basic auth secrets configured on Container App" -ForegroundColor Green
+        } else {
+            Write-Host "[WARN] Secrets set but env var wiring failed — run 'az containerapp update' manually" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[WARN] Failed to set Container App secrets — check permissions" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "[SKIP] Basic auth — set WEB_APP_USERNAME and WEB_APP_PASSWORD in azd env to enable" -ForegroundColor Gray
+}
+
 # Generate local dev config files (moved from preprovision — clientId comes from Bicep)
 $aiAgentEndpoint = azd env get-value AI_AGENT_ENDPOINT 2>$null
 $aiAgentId = azd env get-value AI_AGENT_ID 2>$null
