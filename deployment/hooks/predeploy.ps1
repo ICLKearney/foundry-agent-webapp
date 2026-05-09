@@ -39,9 +39,19 @@ if (-not $acrName) {
 $imageTag = "deploy-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
 $imageName = "$acrName.azurecr.io/web:$imageTag"
 
+# Azure Cloud Shell does not support local Docker daemon operations.
+$isCloudShell = @(
+    $env:AZD_IN_CLOUDSHELL,
+    $env:ACC_CLOUD,
+    $env:AZUREPS_HOST_ENVIRONMENT,
+    $env:POWERSHELL_DISTRIBUTION_CHANNEL
+) -join ' ' -match 'cloud-shell|cloudshell|ACC_CLOUD|PROD|AZD_IN_CLOUDSHELL'
+
 # Check Docker availability
 $dockerAvailable = $false
-if (Get-Command docker -EA SilentlyContinue) {
+if ($isCloudShell) {
+    Write-Host "[INFO] Azure Cloud Shell detected. Using ACR cloud build." -ForegroundColor Yellow
+} elseif (Get-Command docker -EA SilentlyContinue) {
     $dockerVersion = docker version --format '{{.Server.Version}}' 2>$null
     if ($LASTEXITCODE -eq 0 -and $dockerVersion) {
         $dockerAvailable = $true
