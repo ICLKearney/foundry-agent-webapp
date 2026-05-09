@@ -17,6 +17,8 @@ function Get-AzdValue($name) {
 
 $clientId = Get-AzdValue 'ENTRA_SPA_CLIENT_ID'
 $tenantId = Get-AzdValue 'ENTRA_TENANT_ID'
+$disableAuthRaw = Get-AzdValue 'DISABLE_AUTH'
+$disableAuth = "$disableAuthRaw".ToLowerInvariant() -eq 'true'
 $backendClientId = Get-AzdValue 'ENTRA_BACKEND_CLIENT_ID'
 $appInsightsConnStr = Get-AzdValue 'APPLICATIONINSIGHTS_FRONTEND_CONNECTION_STRING'
 # Escape semicolons for ACR cloud builds — unescaped semicolons are interpreted as shell command separators
@@ -25,7 +27,7 @@ $acrName = Get-AzdValue 'AZURE_CONTAINER_REGISTRY_NAME'
 $resourceGroup = Get-AzdValue 'AZURE_RESOURCE_GROUP_NAME'
 $containerApp = Get-AzdValue 'AZURE_CONTAINER_APP_NAME'
 
-if (-not $clientId -or -not $tenantId) {
+if (-not $disableAuth -and (-not $clientId -or -not $tenantId)) {
     Write-Host "[ERROR] ENTRA_SPA_CLIENT_ID or ENTRA_TENANT_ID not set" -ForegroundColor Red
     exit 1
 }
@@ -55,9 +57,11 @@ try {
         Write-Host "Building with local Docker..." -ForegroundColor Cyan
         $buildArgs = @(
             "--platform", "linux/amd64",
-            "--build-arg", "ENTRA_SPA_CLIENT_ID=$clientId",
-            "--build-arg", "ENTRA_TENANT_ID=$tenantId"
+            "--build-arg", "DISABLE_AUTH=$($disableAuth.ToString().ToLowerInvariant())"
         )
+        if (-not $disableAuth) {
+            $buildArgs += @("--build-arg", "ENTRA_SPA_CLIENT_ID=$clientId", "--build-arg", "ENTRA_TENANT_ID=$tenantId")
+        }
         if ($backendClientId) { $buildArgs += @("--build-arg", "ENTRA_BACKEND_CLIENT_ID=$backendClientId") }
         if ($appInsightsConnStr) { $buildArgs += @("--build-arg", "APPLICATIONINSIGHTS_FRONTEND_CONNECTION_STRING=$appInsightsConnStr") }
         $buildArgs += @("-f", "deployment/docker/frontend.Dockerfile", "-t", $imageName, ".")
@@ -66,11 +70,33 @@ try {
         
         Write-Host "Pushing to ACR..." -ForegroundColor Cyan
         az acr login --name $acrName | Out-Null
-        docker push $imageName 2>&1 | Out-Host
-        if ($LASTEXITCODE -ne 0) { throw "Docker push failed" }
+        $pushOutput = docker push $imageName 2>&1
+        $pushExitCode = $LASTEXITCODE
+        $pushOutput | Out-Host
+
+        if ($pushExitCode -ne 0 -and ($pushOutput -match "UNAUTHORIZED|unauthorized|authentication required")) {
+            Write-Host "[WARN] ACR auth token was not picked up by Docker. Retrying with token-based docker login..." -ForegroundColor Yellow
+            $acrToken = az acr login --name $acrName --expose-token --query accessToken -o tsv 2>$null
+            if ($LASTEXITCODE -ne 0 -or -not $acrToken) {
+                throw "Docker push failed (could not get ACR access token for retry)"
+            }
+
+            $acrToken | docker login "$acrName.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin 2>&1 | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                throw "Docker push failed (token-based docker login failed)"
+            }
+
+            docker push $imageName 2>&1 | Out-Host
+            $pushExitCode = $LASTEXITCODE
+        }
+
+        if ($pushExitCode -ne 0) { throw "Docker push failed" }
     } else {
         Write-Host "Using ACR cloud build (3-5 min)..." -ForegroundColor Yellow
-        $acrBuildArgs = @("--build-arg", "ENTRA_SPA_CLIENT_ID=$clientId", "--build-arg", "ENTRA_TENANT_ID=$tenantId")
+        $acrBuildArgs = @("--build-arg", "DISABLE_AUTH=$($disableAuth.ToString().ToLowerInvariant())")
+        if (-not $disableAuth) {
+            $acrBuildArgs += @("--build-arg", "ENTRA_SPA_CLIENT_ID=$clientId", "--build-arg", "ENTRA_TENANT_ID=$tenantId")
+        }
         if ($backendClientId) { $acrBuildArgs += @("--build-arg", "ENTRA_BACKEND_CLIENT_ID=$backendClientId") }
         if ($appInsightsConnStrEscaped) { $acrBuildArgs += @("--build-arg", "APPLICATIONINSIGHTS_FRONTEND_CONNECTION_STRING=$appInsightsConnStrEscaped") }
         $buildOutput = az acr build --registry $acrName --image "web:$imageTag" `

@@ -1,10 +1,12 @@
 import type { Configuration } from "@azure/msal-browser";
 import { LogLevel } from "@azure/msal-browser";
 
+const disableAuth = import.meta.env.VITE_DISABLE_AUTH === "true";
+
 // Environment variables (must be set during build or deployment)
 const clientId = import.meta.env.VITE_ENTRA_SPA_CLIENT_ID;
 
-if (!clientId) {
+if (!disableAuth && !clientId) {
   throw new Error(
     "VITE_ENTRA_SPA_CLIENT_ID is not set. This must be provided during build time. " +
     "For local dev, ensure azd environment is configured and run preprovision hook."
@@ -12,21 +14,24 @@ if (!clientId) {
 }
 
 // When OBO is enabled, scopes target the backend API app instead of the SPA
-const scopeClientId = import.meta.env.VITE_ENTRA_BACKEND_CLIENT_ID || clientId;
+const resolvedClientId = clientId || "00000000-0000-0000-0000-000000000000";
+const scopeClientId = import.meta.env.VITE_ENTRA_BACKEND_CLIENT_ID || resolvedClientId;
 
 const tenantId = import.meta.env.VITE_ENTRA_TENANT_ID;
 
-if (!tenantId) {
+if (!disableAuth && !tenantId) {
   throw new Error(
     "VITE_ENTRA_TENANT_ID is not set. This must be provided during build time. " +
     "For local dev, run setup-local-dev.ps1 to configure from azd environment."
   );
 }
 
+const resolvedTenantId = tenantId || "common";
+
 export const msalConfig: Configuration = {
   auth: {
-    clientId: clientId,
-    authority: `https://login.microsoftonline.com/${tenantId}`,
+    clientId: resolvedClientId,
+    authority: `https://login.microsoftonline.com/${resolvedTenantId}`,
     redirectUri: window.location.origin, // Will be https://<container-app-url> in production
     postLogoutRedirectUri: window.location.origin,
     navigateToLoginRequestUrl: false, // Avoid redirect loops
@@ -61,10 +66,10 @@ export const msalConfig: Configuration = {
 
 // API permission scope (will match app registration in Step 08)
 export const loginRequest = {
-  scopes: [`api://${scopeClientId}/Chat.ReadWrite`],
+  scopes: disableAuth ? [] : [`api://${scopeClientId}/Chat.ReadWrite`],
 };
 
 export const tokenRequest = {
-  scopes: [`api://${scopeClientId}/Chat.ReadWrite`],
+  scopes: disableAuth ? [] : [`api://${scopeClientId}/Chat.ReadWrite`],
   forceRefresh: false, // Use cached token if valid
 };

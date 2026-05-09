@@ -25,6 +25,9 @@
     },
     "enableObo": {
       "value": "${ENABLE_OBO=false}"
+    },
+    "disableAuth": {
+      "value": "${DISABLE_AUTH=false}"
     }
   }
 }

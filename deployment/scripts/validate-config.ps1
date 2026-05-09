@@ -20,10 +20,16 @@ function Test-EnvVar {
 # Frontend
 Write-Host "Frontend config:" -ForegroundColor Cyan
 $frontendEnv = Join-Path $projectRoot "frontend/.env.local"
+$disableAuth = $false
 if (Test-Path $frontendEnv) {
     $content = Get-Content $frontendEnv -Raw
-    if (-not (Test-EnvVar $content "VITE_ENTRA_SPA_CLIENT_ID" "frontend/.env.local")) { $null = $validationErrors.Add("VITE_ENTRA_SPA_CLIENT_ID") }
-    if (-not (Test-EnvVar $content "VITE_ENTRA_TENANT_ID" "frontend/.env.local")) { $null = $validationErrors.Add("VITE_ENTRA_TENANT_ID") }
+    if ($content -match "VITE_DISABLE_AUTH=true") {
+        $disableAuth = $true
+        Write-Host "  OK: VITE_DISABLE_AUTH=true (no-auth mode)" -ForegroundColor Green
+    } else {
+        if (-not (Test-EnvVar $content "VITE_ENTRA_SPA_CLIENT_ID" "frontend/.env.local")) { $null = $validationErrors.Add("VITE_ENTRA_SPA_CLIENT_ID") }
+        if (-not (Test-EnvVar $content "VITE_ENTRA_TENANT_ID" "frontend/.env.local")) { $null = $validationErrors.Add("VITE_ENTRA_TENANT_ID") }
+    }
 } else {
     $null = $validationErrors.Add("frontend/.env.local not found")
     Write-Host "  [ERROR] File not found" -ForegroundColor Red
@@ -34,8 +40,12 @@ Write-Host "Backend config:" -ForegroundColor Cyan
 $backendEnv = Join-Path $projectRoot "backend/WebApp.Api/.env"
 if (Test-Path $backendEnv) {
     $content = Get-Content $backendEnv -Raw
-    if (-not (Test-EnvVar $content "AzureAd__TenantId" "backend/.env")) { $null = $validationErrors.Add("AzureAd__TenantId") }
-    if (-not (Test-EnvVar $content "AzureAd__ClientId" "backend/.env")) { $null = $validationErrors.Add("AzureAd__ClientId") }
+    if ($disableAuth -or $content -match "DISABLE_AUTH=true") {
+        Write-Host "  OK: DISABLE_AUTH=true (no-auth mode)" -ForegroundColor Green
+    } else {
+        if (-not (Test-EnvVar $content "AzureAd__TenantId" "backend/.env")) { $null = $validationErrors.Add("AzureAd__TenantId") }
+        if (-not (Test-EnvVar $content "AzureAd__ClientId" "backend/.env")) { $null = $validationErrors.Add("AzureAd__ClientId") }
+    }
 } else {
     $null = $validationErrors.Add("backend/.env not found")
     Write-Host "  [ERROR] File not found" -ForegroundColor Red

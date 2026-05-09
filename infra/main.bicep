@@ -25,6 +25,9 @@ param serviceManagementReference string = ''
 @description('Enable OBO (On-Behalf-Of) flow for user-delegated access to Agent Service (secretless via FIC)')
 param enableObo bool = false
 
+@description('Disable Entra authentication and app registration provisioning (for restricted tenants)')
+param disableAuth bool = false
+
 @description('Container image for web service (set by postprovision hook)')
 param webImageName string = 'mcr.microsoft.com/k8se/quickstart:latest'  // Placeholder during initial provision
 
@@ -59,7 +62,7 @@ module infrastructure 'main-infrastructure.bicep' = {
 
 // Create Entra app registration (Microsoft Graph Bicep extension)
 // Creates with localhost-only redirect URIs; postprovision adds Container App FQDN + FIC
-module entraApp 'entra-app.bicep' = {
+module entraApp 'entra-app.bicep' = if (!disableAuth) {
   name: 'entra-app'
   scope: rg
   params: {
@@ -81,9 +84,10 @@ module app 'main-app.bicep' = {
     containerRegistryName: infrastructure.outputs.containerRegistryName
     aiAgentEndpoint: aiAgentEndpoint
     aiAgentId: aiAgentId
-    entraSpaClientId: entraApp.outputs.clientAppId
+    entraSpaClientId: disableAuth ? '' : entraApp.outputs.clientAppId
     entraTenantId: entraTenantId
-    entraBackendClientId: enableObo ? entraApp.outputs.backendClientAppId : ''
+    entraBackendClientId: (disableAuth || !enableObo) ? '' : entraApp.outputs.backendClientAppId
+    disableAuth: disableAuth
     webImageName: webImageName
     userAssignedIdentityId: infrastructure.outputs.managedIdentityId
     oboManagedIdentityClientId: infrastructure.outputs.managedIdentityClientId
@@ -102,9 +106,9 @@ output AZURE_RESOURCE_GROUP_NAME string = rg.name
 output AZURE_CONTAINER_APP_NAME string = app.outputs.webAppName
 output WEB_ENDPOINT string = app.outputs.webEndpoint
 output WEB_IDENTITY_PRINCIPAL_ID string = infrastructure.outputs.managedIdentityPrincipalId
-output ENTRA_SPA_CLIENT_ID string = entraApp.outputs.clientAppId
-output ENTRA_APP_OBJECT_ID string = entraApp.outputs.appObjectId
-output ENTRA_BACKEND_CLIENT_ID string = enableObo ? entraApp.outputs.backendClientAppId : ''
-output ENTRA_BACKEND_APP_OBJECT_ID string = enableObo ? entraApp.outputs.backendAppObjectId : ''
+output ENTRA_SPA_CLIENT_ID string = disableAuth ? '' : entraApp.outputs.clientAppId
+output ENTRA_APP_OBJECT_ID string = disableAuth ? '' : entraApp.outputs.appObjectId
+output ENTRA_BACKEND_CLIENT_ID string = (disableAuth || !enableObo) ? '' : entraApp.outputs.backendClientAppId
+output ENTRA_BACKEND_APP_OBJECT_ID string = (disableAuth || !enableObo) ? '' : entraApp.outputs.backendAppObjectId
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = infrastructure.outputs.appInsightsConnectionString
 output APPLICATIONINSIGHTS_FRONTEND_CONNECTION_STRING string = infrastructure.outputs.appInsightsFrontendConnectionString

@@ -31,8 +31,13 @@ import { useCallback, useMemo } from "react";
  */
 export const useAuth = () => {
   const { instance, accounts } = useMsal();
+  const disableAuth = import.meta.env.VITE_DISABLE_AUTH === 'true';
 
   const getAccessToken = useCallback(async (): Promise<string | null> => {
+    if (disableAuth) {
+      return null;
+    }
+
     if (accounts.length === 0) {
       return null;
     }
@@ -63,12 +68,12 @@ export const useAuth = () => {
       console.error("Token acquisition error:", error);
       return null;
     }
-  }, [instance, accounts]);
+  }, [disableAuth, instance, accounts]);
 
   // Memoize computed values
   const isAuthenticated = useMemo(
-    () => accounts.length > 0,
-    [accounts.length]
+    () => disableAuth || accounts.length > 0,
+    [disableAuth, accounts.length]
   );
 
   const user = useMemo(

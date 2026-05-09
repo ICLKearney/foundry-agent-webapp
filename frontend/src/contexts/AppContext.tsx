@@ -1,6 +1,7 @@
 import { createContext, useContext, useReducer, useEffect, useMemo } from 'react';
 import type { ReactNode, Dispatch } from 'react';
 import { useMsal } from '@azure/msal-react';
+import type { AccountInfo } from '@azure/msal-browser';
 import type { AppState, AppAction } from '../types/appState';
 import { initialAppState } from '../types/appState';
 import { appReducer } from '../reducers/appReducer';
@@ -71,13 +72,27 @@ const reducerWithLogging = (state: AppState, action: AppAction): AppState => {
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [state, dispatch] = useReducer(reducerWithLogging, initialAppState);
   const { accounts } = useMsal();
+  const disableAuth = import.meta.env.VITE_DISABLE_AUTH === 'true';
 
   // Initialize auth state from MSAL
   useEffect(() => {
+    if (disableAuth) {
+      const noAuthUser: AccountInfo = {
+        homeAccountId: 'no-auth-user',
+        environment: 'localhost',
+        tenantId: 'no-auth',
+        username: 'no-auth@local',
+        localAccountId: 'no-auth-user',
+        name: 'NoAuth User',
+      };
+      dispatch({ type: 'AUTH_INITIALIZED', user: noAuthUser });
+      return;
+    }
+
     if (accounts.length > 0) {
       dispatch({ type: 'AUTH_INITIALIZED', user: accounts[0] });
     }
-  }, [accounts]);
+  }, [accounts, disableAuth]);
 
   // Dev mode: Log when provider mounts and unmounts
   useEffect(() => {

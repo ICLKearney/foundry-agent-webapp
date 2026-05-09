@@ -53,11 +53,21 @@ const ERROR_HTML = `<!DOCTYPE html>
 
 export function envCheckPlugin(): Plugin {
   let missing: string[] = [];
+  let disableAuth = false;
 
   return {
     name: "env-check",
     configResolved(config) {
       if (config.command !== "serve") return;
+
+      disableAuth =
+        process.env.VITE_DISABLE_AUTH === "true" ||
+        process.env.DISABLE_AUTH === "true";
+
+      if (disableAuth) {
+        missing = [];
+        return;
+      }
 
       missing = REQUIRED_VARS.filter(
         (v) => !process.env[v] || process.env[v] === "undefined"

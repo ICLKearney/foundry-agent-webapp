@@ -10,7 +10,19 @@ import { useAuth } from "./hooks/useAuth";
 import type { IAgentMetadata } from "./types/chat";
 import "./App.css";
 
-function App() {
+const disableAuth = import.meta.env.VITE_DISABLE_AUTH === 'true';
+
+const fallbackMetadata: IAgentMetadata = {
+  id: 'fallback-agent',
+  object: 'agent',
+  createdAt: Date.now() / 1000,
+  name: 'Azure AI Agent',
+  description: 'Your intelligent conversational partner powered by Azure AI',
+  model: 'gpt-4o-mini',
+  metadata: { logo: 'Avatar_Default.svg' }
+};
+
+function AuthenticatedApp() {
   // This hook handles authentication automatically - redirects if not authenticated
   useMsalAuthentication(InteractionType.Redirect, loginRequest);
   const { auth } = useAppState();
@@ -25,12 +37,15 @@ function App() {
     try {
       const token = await getAccessToken();
       const apiUrl = import.meta.env.VITE_API_URL || '/api';
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json'
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
       
       const response = await fetch(`${apiUrl}/agent`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
+        headers
       });
 
       if (!response.ok) {
@@ -45,15 +60,7 @@ function App() {
     } catch (error) {
       console.error('Error fetching agent metadata:', error);
       // Fallback data keeps UI functional on error
-      setAgentMetadata({
-        id: 'fallback-agent',
-        object: 'agent',
-        createdAt: Date.now() / 1000,
-        name: 'Azure AI Agent',
-        description: 'Your intelligent conversational partner powered by Azure AI',
-        model: 'gpt-4o-mini',
-        metadata: { logo: 'Avatar_Default.svg' }
-      });
+      setAgentMetadata(fallbackMetadata);
       document.title = 'Azure AI Agent';
     } finally {
       setIsLoadingAgent(false);
@@ -109,6 +116,83 @@ function App() {
       )}
     </ErrorBoundary>
   );
+}
+
+function NoAuthApp() {
+  const { getAccessToken } = useAuth();
+  const [agentMetadata, setAgentMetadata] = useState<IAgentMetadata | null>(null);
+  const [isLoadingAgent, setIsLoadingAgent] = useState(true);
+
+  const fetchAgentMetadata = useCallback(async () => {
+    try {
+      const token = await getAccessToken();
+      const apiUrl = import.meta.env.VITE_API_URL || '/api';
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json'
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const response = await fetch(`${apiUrl}/agent`, { headers });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      setAgentMetadata(data);
+      document.title = data.name ? `${data.name} - Azure AI Agent` : 'Azure AI Agent';
+    } catch (error) {
+      console.error('Error fetching agent metadata:', error);
+      setAgentMetadata(fallbackMetadata);
+      document.title = 'Azure AI Agent';
+    } finally {
+      setIsLoadingAgent(false);
+    }
+  }, [getAccessToken]);
+
+  useEffect(() => {
+    fetchAgentMetadata();
+  }, [fetchAgentMetadata]);
+
+  return (
+    <ErrorBoundary>
+      {isLoadingAgent ? (
+        <div className="app-container" style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100vh',
+          flexDirection: 'column',
+          gap: '1rem'
+        }}>
+          <Spinner size="large" />
+          <p style={{ margin: 0 }}>Loading agent...</p>
+        </div>
+      ) : (
+        agentMetadata && (
+          <div className="app-container">
+            <AgentChat
+              agentId={agentMetadata.id}
+              agentName={agentMetadata.name}
+              agentDescription={agentMetadata.description || undefined}
+              agentLogo={agentMetadata.metadata?.logo}
+              starterPrompts={agentMetadata.starterPrompts || undefined}
+            />
+          </div>
+        )
+      )}
+    </ErrorBoundary>
+  );
+}
+
+function App() {
+  if (disableAuth) {
+    return <NoAuthApp />;
+  }
+
+  return <AuthenticatedApp />;
 }
 
 export default App;

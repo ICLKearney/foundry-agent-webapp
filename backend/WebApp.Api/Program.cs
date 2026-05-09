@@ -1,8 +1,11 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.Identity.Web;
 using WebApp.Api.Models;
 using WebApp.Api.Services;
 using System.Security.Claims;
+using System.Text.Encodings.Web;
+using Microsoft.Extensions.Options;
 
 // Load .env file for local development BEFORE building the configuration
 // In production (Docker), Container Apps injects environment variables directly
@@ -95,36 +98,54 @@ if (!string.IsNullOrEmpty(tenantId))
 
 const string RequiredScope = "Chat.ReadWrite";
 const string ScopePolicyName = "RequireChatScope";
+var disableAuth = builder.Configuration.GetValue<bool>("DISABLE_AUTH");
 
-// Add Microsoft Identity Web authentication
-// Validates JWT bearer tokens issued for the SPA's delegated scope
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddMicrosoftIdentityWebApi(options =>
-    {
-        builder.Configuration.Bind("AzureAd", options);
-        var configuredClientId = builder.Configuration["AzureAd:ClientId"];
-        var backendClientId = builder.Configuration["ENTRA_BACKEND_CLIENT_ID"];
-
-        // When OBO is enabled, tokens are scoped to the backend API app
-        var audiences = new List<string> { configuredClientId!, $"api://{configuredClientId}" };
-        if (!string.IsNullOrEmpty(backendClientId))
+if (disableAuth)
+{
+    // Development/deployment bypass for environments that cannot create Entra app registrations.
+    builder.Services
+        .AddAuthentication("Bypass")
+        .AddScheme<AuthenticationSchemeOptions, BypassAuthHandler>("Bypass", _ => { });
+}
+else
+{
+    // Add Microsoft Identity Web authentication
+    // Validates JWT bearer tokens issued for the SPA's delegated scope
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddMicrosoftIdentityWebApi(options =>
         {
-            audiences.Add(backendClientId);
-            audiences.Add($"api://{backendClientId}");
-        }
-        options.TokenValidationParameters.ValidAudiences = audiences;
+            builder.Configuration.Bind("AzureAd", options);
+            var configuredClientId = builder.Configuration["AzureAd:ClientId"];
+            var backendClientId = builder.Configuration["ENTRA_BACKEND_CLIENT_ID"];
 
-        options.TokenValidationParameters.NameClaimType = ClaimTypes.Name;
-        options.TokenValidationParameters.RoleClaimType = ClaimTypes.Role;
-    }, options => builder.Configuration.Bind("AzureAd", options));
+            // When OBO is enabled, tokens are scoped to the backend API app
+            var audiences = new List<string> { configuredClientId!, $"api://{configuredClientId}" };
+            if (!string.IsNullOrEmpty(backendClientId))
+            {
+                audiences.Add(backendClientId);
+                audiences.Add($"api://{backendClientId}");
+            }
+            options.TokenValidationParameters.ValidAudiences = audiences;
+
+            options.TokenValidationParameters.NameClaimType = ClaimTypes.Name;
+            options.TokenValidationParameters.RoleClaimType = ClaimTypes.Role;
+        }, options => builder.Configuration.Bind("AzureAd", options));
+}
 
 builder.Services.AddAuthorization(options =>
 {
-    // Use Microsoft.Identity.Web's built-in scope validation
     options.AddPolicy(ScopePolicyName, policy =>
     {
         policy.RequireAuthenticatedUser();
-        policy.RequireScope(RequiredScope);
+        if (disableAuth)
+        {
+            policy.RequireClaim("scp", RequiredScope);
+        }
+        else
+        {
+            // Use Microsoft.Identity.Web's built-in scope validation
+            policy.RequireScope(RequiredScope);
+        }
     });
 });
 
@@ -618,4 +639,30 @@ static string GetMimeType(string fileName)
         ".js" => "text/javascript",
         _ => "application/octet-stream",
     };
+}
+
+sealed class BypassAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions>
+{
+    public BypassAuthHandler(
+        IOptionsMonitor<AuthenticationSchemeOptions> options,
+        ILoggerFactory logger,
+        UrlEncoder encoder)
+        : base(options, logger, encoder)
+    {
+    }
+
+    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+    {
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, "no-auth-user"),
+            new Claim(ClaimTypes.Name, "NoAuth User"),
+            new Claim("scp", "Chat.ReadWrite"),
+        };
+
+        var identity = new ClaimsIdentity(claims, Scheme.Name);
+        var principal = new ClaimsPrincipal(identity);
+        var ticket = new AuthenticationTicket(principal, Scheme.Name);
+        return Task.FromResult(AuthenticateResult.Success(ticket));
+    }
 }

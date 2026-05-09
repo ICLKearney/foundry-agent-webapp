@@ -10,6 +10,7 @@ Write-Host "Post-Provision: Configure Entra App, RBAC & Local Config" -Foregroun
 
 # Get required env vars (ENTRA_SPA_CLIENT_ID is now a Bicep output)
 $clientId = azd env get-value ENTRA_SPA_CLIENT_ID 2>$null
+$disableAuth = ((azd env get-value DISABLE_AUTH 2>$null) + '').ToLowerInvariant() -eq 'true'
 $containerAppUrl = azd env get-value WEB_ENDPOINT 2>$null
 $webIdentityPrincipalId = azd env get-value WEB_IDENTITY_PRINCIPAL_ID 2>$null
 $aiFoundryResourceGroup = azd env get-value AI_FOUNDRY_RESOURCE_GROUP 2>$null
@@ -17,7 +18,7 @@ $aiFoundryResourceName = azd env get-value AI_FOUNDRY_RESOURCE_NAME 2>$null
 $subscriptionId = azd env get-value AZURE_SUBSCRIPTION_ID 2>$null
 $tenantId = azd env get-value ENTRA_TENANT_ID 2>$null
 
-if (-not $clientId) {
+if (-not $disableAuth -and -not $clientId) {
     Write-Host "[ERROR] ENTRA_SPA_CLIENT_ID not set (should be output from Bicep)" -ForegroundColor Red
     exit 1
 }
@@ -26,49 +27,55 @@ if (-not $containerAppUrl) {
     exit 1
 }
 
-Write-Host "[OK] Client ID: $clientId (from Bicep)" -ForegroundColor Green
+if ($disableAuth) {
+    Write-Host "[SKIP] Entra app configuration disabled (DISABLE_AUTH=true)" -ForegroundColor Yellow
+} else {
+    Write-Host "[OK] Client ID: $clientId (from Bicep)" -ForegroundColor Green
+}
 Write-Host "[OK] Container App: $containerAppUrl" -ForegroundColor Green
 
-# Set identifierUri and update redirect URIs on Entra app
-# identifierUri can't be set in Bicep because it references the auto-generated appId
-$app = az ad app show --id $clientId | ConvertFrom-Json
-$objectId = $app.id
-$identifierUri = "api://$clientId"
+if (-not $disableAuth) {
+    # Set identifierUri and update redirect URIs on Entra app
+    # identifierUri can't be set in Bicep because it references the auto-generated appId
+    $app = az ad app show --id $clientId | ConvertFrom-Json
+    $objectId = $app.id
+    $identifierUri = "api://$clientId"
 
-$patchBody = @{
-    identifierUris = @($identifierUri)
-    spa = @{
-        redirectUris = @(
-            "http://localhost:8080",
-            "http://localhost:5173",
-            $containerAppUrl
-        )
+    $patchBody = @{
+        identifierUris = @($identifierUri)
+        spa = @{
+            redirectUris = @(
+                "http://localhost:8080",
+                "http://localhost:5173",
+                $containerAppUrl
+            )
+        }
+    } | ConvertTo-Json -Depth 10
+
+    $tempFile = [System.IO.Path]::GetTempFileName()
+    $patchBody | Out-File -FilePath $tempFile -Encoding utf8
+
+    az rest --method PATCH `
+        --uri "https://graph.microsoft.com/v1.0/applications/$objectId" `
+        --headers "Content-Type=application/json" `
+        --body "@$tempFile" | Out-Null
+
+    Remove-Item $tempFile -EA SilentlyContinue
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] Failed to update Entra app" -ForegroundColor Red
+        exit 1
     }
-} | ConvertTo-Json -Depth 10
 
-$tempFile = [System.IO.Path]::GetTempFileName()
-$patchBody | Out-File -FilePath $tempFile -Encoding utf8
-
-az rest --method PATCH `
-    --uri "https://graph.microsoft.com/v1.0/applications/$objectId" `
-    --headers "Content-Type=application/json" `
-    --body "@$tempFile" | Out-Null
-
-Remove-Item $tempFile -EA SilentlyContinue
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERROR] Failed to update Entra app" -ForegroundColor Red
-    exit 1
+    Write-Host "[OK] Identifier URI: $identifierUri" -ForegroundColor Green
+    Write-Host "[OK] Redirect URIs updated" -ForegroundColor Green
 }
-
-Write-Host "[OK] Identifier URI: $identifierUri" -ForegroundColor Green
-Write-Host "[OK] Redirect URIs updated" -ForegroundColor Green
 
 # OBO: Bicep creates backend app registration + service principal + requiredResourceAccess.
 # FIC + identifierUri + admin consent are handled here (not Bicep) because Graph API
 # eventual consistency causes child resources to fail when the parent app hasn't replicated yet.
 $backendClientId = azd env get-value ENTRA_BACKEND_CLIENT_ID 2>$null
-if ($backendClientId) {
+if (-not $disableAuth -and $backendClientId) {
     Write-Host "OBO: Configuring backend app ($backendClientId)..." -ForegroundColor Yellow
     
     $backendObjectId = az ad app show --id $backendClientId --query "id" -o tsv 2>$null
@@ -181,24 +188,32 @@ $aiAgentVersion = azd env get-value AI_AGENT_VERSION 2>$null
 # Frontend .env.local
 $frontendEnv = @"
 # Auto-generated - Do not commit
-VITE_ENTRA_SPA_CLIENT_ID=$clientId
-VITE_ENTRA_TENANT_ID=$tenantId
+VITE_DISABLE_AUTH=$($disableAuth.ToString().ToLowerInvariant())
 "@
-if ($backendClientId) {
-    $frontendEnv += "`nVITE_ENTRA_BACKEND_CLIENT_ID=$backendClientId"
+
+if (-not $disableAuth) {
+    $frontendEnv += "`nVITE_ENTRA_SPA_CLIENT_ID=$clientId"
+    $frontendEnv += "`nVITE_ENTRA_TENANT_ID=$tenantId"
+    if ($backendClientId) {
+        $frontendEnv += "`nVITE_ENTRA_BACKEND_CLIENT_ID=$backendClientId"
+    }
 }
 $frontendEnv | Out-File -FilePath "frontend/.env.local" -Encoding utf8 -Force
 
 # Backend .env
 $backendEnvContent = @"
 # Auto-generated - Do not commit
-AzureAd__Instance=https://login.microsoftonline.com/
-AzureAd__TenantId=$tenantId
-AzureAd__ClientId=$clientId
-AzureAd__Audience=api://$clientId
+DISABLE_AUTH=$($disableAuth.ToString().ToLowerInvariant())
 AI_AGENT_ENDPOINT=$aiAgentEndpoint
 AI_AGENT_ID=$aiAgentId
 "@
+
+if (-not $disableAuth) {
+    $backendEnvContent += "`nAzureAd__Instance=https://login.microsoftonline.com/"
+    $backendEnvContent += "`nAzureAd__TenantId=$tenantId"
+    $backendEnvContent += "`nAzureAd__ClientId=$clientId"
+    $backendEnvContent += "`nAzureAd__Audience=api://$clientId"
+}
 if ($aiAgentVersion) {
     $backendEnvContent += "`nAI_AGENT_VERSION=$aiAgentVersion"
 }

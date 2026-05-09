@@ -7,6 +7,7 @@ param aiAgentEndpoint string
 param aiAgentId string
 param entraSpaClientId string
 param entraTenantId string
+param disableAuth bool = false
 param entraBackendClientId string = ''
 param webImageName string
 param userAssignedIdentityId string = ''
@@ -33,6 +34,10 @@ var baseEnv = [
   {
     name: 'ENTRA_TENANT_ID'
     value: entraTenantId
+  }
+  {
+    name: 'DISABLE_AUTH'
+    value: disableAuth ? 'true' : 'false'
   }
   {
     name: 'AI_AGENT_ENDPOINT'
